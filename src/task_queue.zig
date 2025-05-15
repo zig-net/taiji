@@ -4,6 +4,7 @@ const Atomic = std.atomic;
 const Allocator = std.mem.Allocator;
 const fd_t = std.posix.fd_t;
 const posix = std.posix;
+const InnerError = @import("error.zig").InnerError;
 
 pub const EventType = enum {
     epoll,
@@ -15,6 +16,7 @@ pub const Event = union {
     epoll: *os.linux.epoll_event,
     kqueue: *std.c.Kevent,
     poll: std.c.pollfd,
+    unknow: ?void,
 };
 
 allocator: Allocator,
@@ -26,6 +28,33 @@ pub const Task = struct {
     event: Event,
     poll_data: ?[]u8 = null, // 因为poll在缓冲区数据没有被读取完毕时会持续触发
     poll_offset: usize = 0,
+
+    // pub fn padding(self: *@This(), allocator: Allocator) !void {
+    //     if (self.poll_data != null) {
+    //         return;
+    //     }
+    //     var buffer = std.ArrayList(u8).init(allocator);
+    //     defer allocator.free(buffer);
+    //     var data_len: usize = 0;
+    //     var buf: [1024]u8 = std.mem.zeroes([1024]u8);
+    //     var len = try posix.read(self.event_fd, &buf);
+    //     if (len == 0) {
+    //         return InnerError.ClientDisconnected;
+    //     }
+    //     while (len == buf.len) {
+    //         data_len += buf.len;
+    //         try buffer.appendSlice(&buf);
+    //         len = try posix.read(self.event_fd, &buf);
+    //     }
+    //     try buffer.appendSlice(buf[0..len]);
+    //     data_len += len;
+
+    //     const data_copy = try allocator.alloc(u8, data_len);
+    //     std.mem.copyForwards(u8, data_copy, buffer.items);
+
+    //     self.poll_data = data_copy;
+    //     return;
+    // }
 
     pub fn read(self: *@This(), buf: []u8) !usize {
         if (self.poll_data) |data| {
@@ -40,6 +69,14 @@ pub const Task = struct {
             return data_len - self.poll_offset;
         }
         return posix.read(self.event_fd, buf);
+    }
+
+    pub fn indexOf(self: *@This(), needle: []const u8) ?usize {
+        if (self.poll_data) |data| {
+            return std.mem.indexOf(u8, data, needle);
+        }
+
+        return null;
     }
 
     pub fn free(self: @This(), allocator: Allocator) void {
@@ -111,7 +148,9 @@ test "task queue" {
         .fd = 1,
         .event_type = .epoll,
         .event_fd = 1,
-        .event = .{ .poll = .{} },
+        .event = .{
+            .unknow = null,
+        },
     });
     const task_data = queue.popTask();
     if (task_data) |task_data_info| {
@@ -123,6 +162,24 @@ test "task queue" {
 
 test "buffer" {
     const buf = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
-    const slice = buf[1..2];
+    const slice = buf[5..7];
     std.log.warn("test {any}", .{slice});
+
+    const data_copy = try std.testing.allocator.alloc(u8, buf.len);
+    std.mem.copyForwards(u8, data_copy, buf[0..buf.len]);
+
+    var task: Task = .{
+        .fd = 1,
+        .event_type = .epoll,
+        .event_fd = 1,
+        .event = .{
+            .unknow = null,
+        },
+        .poll_data = data_copy,
+    };
+
+    defer task.free(std.testing.allocator);
+
+    const index = task.indexOf(slice);
+    std.log.warn("index {?}", .{index});
 }

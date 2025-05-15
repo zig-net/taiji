@@ -6,6 +6,7 @@ const Thread = std.Thread;
 const Atomic = std.atomic;
 const task_queue = @import("task_queue.zig");
 const poll = @import("core/poll.zig");
+const status = @import("status.zig").Status;
 
 var shutdown = Atomic.Value(bool).init(false); // 优雅退出标志
 
@@ -17,6 +18,7 @@ pub fn initThreadPool(allocator: std.mem.Allocator, num_workers: usize) !@This()
     for (0..num_workers) |_| {
         _ = try Thread.spawn(.{}, workerThread, .{ allocator, queue });
     }
+
     return .{
         .queue = queue,
         .allocator = allocator,
@@ -29,36 +31,79 @@ pub fn get_queue(self: @This()) task_queue {
 
 // 工作线程函数
 fn workerThread(allocator: Allocator, queue: task_queue) void {
+    var header_buffer = std.ArrayList(u8).init(allocator);
+    defer header_buffer.deinit();
     while (!shutdown.load(.seq_cst)) {
         // std.log.debug("load loop", .{});
         if (queue.popTask()) |task_data_const| {
             // handleTask(task_proc);
             var task_data = task_data_const;
             defer task_data.free(allocator);
+
             const ev = task_data.event;
 
             const ret = checkFd(ev, task_data.event_type);
 
             std.log.debug("get task {} checked: {}", .{ task_data.event_fd, ret });
 
-            if (ret) {
-                var buf: [1024]u8 = std.mem.zeroes([1024]u8);
-                var len: usize = 0;
-                if (task_data.read(&buf)) |l| {
-                    std.log.debug("read len: {}", .{l});
-                    len = l;
-                    if (len == 0) {
-                        closeFd(task_data.fd, task_data.event_fd, task_data.event_type) catch std.log.debug("close fd err", .{});
-                    }
-                } else |err| {
-                    std.log.debug("read err: {}", .{err});
-                }
-                if (len == 0) {
+            if (!ret) {
+                closeFd(task_data.fd, task_data.event_fd, task_data.event_type) catch |err| {
+                    std.log.err("An error occurred closing the file descriptor: {}", .{err});
+                };
+                // 考虑写回 status.INTERNAL_SERVER_ERROR
+                continue;
+            }
+            // 构建resquest
+            if (task_data.event_type == .poll) {
+                const header_end_index = task_data.indexOf("\r\n\r\n");
+                std.log.debug("header end: {?}", .{header_end_index});
+
+                if (header_end_index == null) {
+                    // 未检测到header分段
+                    closeFd(task_data.fd, task_data.event_fd, task_data.event_type) catch |err| {
+                        std.log.err("An error occurred closing the file descriptor: {}", .{err});
+                    };
+                    // 考虑写回 status.INTERNAL_SERVER_ERROR
                     continue;
                 }
-                if (posix.write(task_data.event_fd, buf[0..len])) |size| {
-                    _ = size;
-                } else |_| {}
+
+                const header_buf_len: usize = header_end_index.? + 4; // 4 为\r\n\r\n的长度，将此处读取完毕剩余的就是body部分
+                const header_buf: ?[]u8 = allocator.alloc(u8, header_buf_len) catch null;
+                if (header_buf == null) {
+                    std.log.err("Header buffer allocation failure", .{});
+                    continue;
+                }
+                defer allocator.free(header_buf.?);
+                const header_read_size = task_data.read(header_buf.?) catch 0;
+                if (header_read_size == 0) {
+                    std.log.err("Header data reading failed", .{});
+                    continue;
+                }
+                std.log.debug("header:\r\n {s}", .{header_buf.?});
+            } else {
+                var headers_finished = false;
+                defer header_buffer.clearRetainingCapacity();
+                var byte: [1]u8 = undefined;
+                while (!headers_finished) {
+                    const size = task_data.read(&byte) catch 0;
+                    if (size == 0) {
+                        break;
+                    }
+                    header_buffer.appendSlice(&byte) catch |err| {
+                        std.log.err("Header_buffer memory allocation error: {}", .{err});
+                        break;
+                    };
+
+                    if (std.mem.indexOf(u8, header_buffer.items, "\r\n\r\n")) |end_index| {
+                        _ = end_index;
+                        headers_finished = true;
+                    }
+                }
+                if (!headers_finished) {
+                    std.log.err("Header data reading failed", .{});
+                    continue;
+                }
+                std.log.debug("header:\r\n {s}", .{header_buffer.items});
             }
             // if (std.unicode.utf8ValidateSlice(task_data.data)) {
             //     std.debug.print("Valid UTF-8: {s}\n", .{task_data.data});
@@ -73,7 +118,8 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
 }
 
 pub fn deinit(self: @This()) void {
-    return self.queue.deinit();
+    self.queue.deinit();
+    return;
 }
 
 const builtin = @import("builtin");
@@ -105,11 +151,15 @@ fn checkFd(ev: task_queue.Event, event_type: task_queue.EventType) bool {
     return true;
 }
 
+const native_os = builtin.os.tag;
+
 fn closeFd(fd: posix.fd_t, ev_fd: posix.fd_t, event_type: task_queue.EventType) !void {
+    // TODO: 会遇到.BADF，这也因该是一种状态，但是zig标准库直接使用了unreachable，很糟糕，也就是说当传入的描述符已被系统关闭或者无效描述符，那么就会导致直接报错
     switch (event_type) {
         .epoll => {
             if (comptime os_tag == .linux) {
-                posix.close(ev_fd);
+                // posix.close(ev_fd);
+                // 会因为.BADF导致报错，所以这里不再进行手动关闭，等待系统回收吧
                 _ = try posix.epoll_ctl(fd, os.linux.EPOLL.CTL_DEL, ev_fd, null);
             }
         },
@@ -146,4 +196,13 @@ test "test workerThread" {
         .event = null,
     });
     std.time.sleep(100_000_000);
+}
+
+fn thread_test() !void {
+    try std.testing.expect(false);
+}
+
+test "test thread" {
+    const handle = try Thread.spawn(.{}, thread_test, .{});
+    handle.join();
 }

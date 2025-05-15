@@ -1,1 +1,3 @@
-const HttpServerError = error{};
+pub const InnerError = error{
+    ClientDisconnected,
+};
