@@ -178,7 +178,8 @@ fn closeFd(fd: posix.fd_t, ev_fd: posix.fd_t, event_type: task_queue.EventType) 
             }
         },
         .poll => {
-            posix.close(ev_fd);
+            // posix.close(ev_fd);
+            // 会因为.BADF导致报错，所以这里不再进行手动关闭，等待系统回收吧
         },
     }
 }

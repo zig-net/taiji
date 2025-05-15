@@ -31,7 +31,7 @@ pub fn ListenAndServer(self: @This(), address: Address, options: ServerOptions) 
     const th_pool = try thread_pool.initThreadPool(self.allocator, options.worker_num);
     const queue = th_pool.get_queue();
     const event_loop = switch (builtin.os.tag) {
-        .linux => try epoll.init(queue),
+        .linux => try poll.init(self.allocator, queue),
         // TODO: 需要mac设备进行测试
         .macos => try kqueue.init(queue),
         else => try poll.init(self.allocator, queue),

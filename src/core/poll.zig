@@ -79,7 +79,7 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
     // _ = server;
     // 无限循环，等待客户端连接或者已连接的客户端发送数据
     while (true) {
-        // std.log.debug("loop start", .{});
+        std.log.debug("loop start", .{});
         // 调用 poll，nums 是返回的事件数量
         var nums = try std.posix.poll(&sockfds, -1);
         if (nums == 0) {
