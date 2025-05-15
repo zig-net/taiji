@@ -38,7 +38,7 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
                 };
                 try posix.epoll_ctl(self.epoll_fd, os.linux.EPOLL.CTL_ADD, client.stream.handle, &client_event);
             } else {
-                std.log.debug("event: {}", .{ev.events});
+                // std.log.debug("event: {}", .{ev.events});
                 // if (ev.events & (os.linux.EPOLL.HUP | os.linux.EPOLL.ERR | os.linux.EPOLL.RDHUP) != 0) {
                 //     std.log.debug("event: os.linux.EPOLL.HUP|os.linux.EPOLL.ERR", .{});
                 //     try posix.epoll_ctl(self.epoll_fd, os.linux.EPOLL.CTL_DEL, ev.data.fd, null);

@@ -16,7 +16,7 @@ pub const Event = union {
     epoll: *os.linux.epoll_event,
     kqueue: *std.c.Kevent,
     poll: std.c.pollfd,
-    unknow: ?void,
+    unknown: ?void,
 };
 
 allocator: Allocator,
@@ -149,7 +149,7 @@ test "task queue" {
         .event_type = .epoll,
         .event_fd = 1,
         .event = .{
-            .unknow = null,
+            .unknown = null,
         },
     });
     const task_data = queue.popTask();
@@ -173,7 +173,7 @@ test "buffer" {
         .event_type = .epoll,
         .event_fd = 1,
         .event = .{
-            .unknow = null,
+            .unknown = null,
         },
         .poll_data = data_copy,
     };

@@ -79,7 +79,7 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
     // _ = server;
     // 无限循环，等待客户端连接或者已连接的客户端发送数据
     while (true) {
-        std.log.debug("loop start", .{});
+        // std.log.debug("loop start", .{});
         // 调用 poll，nums 是返回的事件数量
         var nums = try std.posix.poll(&sockfds, -1);
         if (nums == 0) {
@@ -200,7 +200,7 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
                 sockfds[i].fd = context.INVALID_SOCKET;
                 connections[i] = null;
                 // posix.close(sockfd.fd);
-                std.log.debug("client {} close", .{i});
+                // std.log.debug("client {} close", .{i});
             }
         }
         // #endregion exist-connections
@@ -210,7 +210,7 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
         // 这里的 sockfds[0] 是 server 的 pollfd
         // 这里的 nums 检查可有可无，因为我们只关心是否有新的连接，POLLIN 就足够了
         if (sockfds[0].revents & context.POLLIN != 0 and nums > 0) {
-            std.log.debug("new client", .{});
+            // std.log.debug("new client", .{});
             // 如果有新的连接，那么调用 accept
             const client = try server.accept();
             // _ = try posix.fcntl(client.stream.handle, posix.F.SETFD, posix.SOCK.NONBLOCK);
@@ -219,7 +219,7 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
                 if (sockfds[i].fd == context.INVALID_SOCKET) {
                     sockfds[i].fd = client.stream.handle;
                     connections[i] = client;
-                    std.log.debug("new client {} comes", .{i});
+                    // std.log.debug("new client {} comes", .{i});
                     break;
                 }
                 // 如果没有找到空的 pollfd，那么说明连接数已经达到了最大值

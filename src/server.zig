@@ -27,11 +27,11 @@ pub const ServerOptions = struct {
 pub fn ListenAndServer(self: @This(), address: Address, options: ServerOptions) !void {
     var ser = try address.listen(.{});
     defer ser.deinit();
-    std.log.debug("socket fd: {}", .{ser.stream.handle});
+    // std.log.debug("socket fd: {}", .{ser.stream.handle});
     const th_pool = try thread_pool.initThreadPool(self.allocator, options.worker_num);
     const queue = th_pool.get_queue();
     const event_loop = switch (builtin.os.tag) {
-        .linux => try poll.init(self.allocator, queue),
+        .linux => try epoll.init(queue),
         // TODO: 需要mac设备进行测试
         .macos => try kqueue.init(queue),
         else => try poll.init(self.allocator, queue),
