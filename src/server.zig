@@ -2,12 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Address = std.net.Address;
 const builtin = @import("builtin");
-const poll = @import("core/poll.zig");
-const epoll = @import("core/epoll.zig");
-const kqueue = @import("core/kqueue.zig");
 const thread_pool = @import("thread_pool.zig");
 const events_t = @import("core/events.zig");
-const loop_t = @import("core/loop.zig");
+const accept_t = @import("core/accept.zig");
 
 allocator: Allocator,
 events: events_t,
@@ -39,14 +36,6 @@ pub fn ListenAndServer(self: @This(), address: Address, options: ServerOptions) 
     // std.log.debug("socket fd: {}", .{ser.stream.handle});
     const th_pool = try thread_pool.initThreadPool(self.allocator, options.worker_num);
     const queue = th_pool.get_queue();
-    // const event_loop = switch (builtin.os.tag) {
-    //     .linux => try epoll.init(queue),
-    //     // TODO: 需要mac设备进行测试
-    //     .macos => try kqueue.init(queue),
-    //     else => try poll.init(self.allocator, queue),
-    // };
-    // defer event_loop.deinit();
-    // try event_loop.accept(&ser);
-    const loop = try loop_t.init(self.events, queue);
+    const loop = try accept_t.init(self.events, queue);
     try loop.accept(&ser);
 }

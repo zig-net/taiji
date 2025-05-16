@@ -4,86 +4,11 @@ const Atomic = std.atomic;
 const Allocator = std.mem.Allocator;
 const fd_t = std.posix.fd_t;
 const posix = std.posix;
-const InnerError = @import("error.zig").InnerError;
-
-pub const EventType = enum {
-    epoll,
-    kqueue,
-    poll,
-};
-
-pub const Event = union {
-    epoll: *os.linux.epoll_event,
-    kqueue: *std.c.Kevent,
-    poll: std.c.pollfd,
-    unknown: ?void,
-};
 
 allocator: Allocator,
 // 任务定义
 pub const Task = struct {
     fd: fd_t,
-    event_fd: fd_t,
-    event_type: EventType,
-    event: Event,
-    poll_data: ?[]u8 = null, // 因为poll在缓冲区数据没有被读取完毕时会持续触发
-    poll_offset: usize = 0,
-
-    // pub fn padding(self: *@This(), allocator: Allocator) !void {
-    //     if (self.poll_data != null) {
-    //         return;
-    //     }
-    //     var buffer = std.ArrayList(u8).init(allocator);
-    //     defer allocator.free(buffer);
-    //     var data_len: usize = 0;
-    //     var buf: [1024]u8 = std.mem.zeroes([1024]u8);
-    //     var len = try posix.read(self.event_fd, &buf);
-    //     if (len == 0) {
-    //         return InnerError.ClientDisconnected;
-    //     }
-    //     while (len == buf.len) {
-    //         data_len += buf.len;
-    //         try buffer.appendSlice(&buf);
-    //         len = try posix.read(self.event_fd, &buf);
-    //     }
-    //     try buffer.appendSlice(buf[0..len]);
-    //     data_len += len;
-
-    //     const data_copy = try allocator.alloc(u8, data_len);
-    //     std.mem.copyForwards(u8, data_copy, buffer.items);
-
-    //     self.poll_data = data_copy;
-    //     return;
-    // }
-
-    pub fn read(self: *@This(), buf: []u8) !usize {
-        if (self.poll_data) |data| {
-            const data_len = data.len;
-            const buf_len = buf.len;
-            if (data_len - self.poll_offset > buf_len) {
-                std.mem.copyForwards(u8, buf, data[self.poll_offset .. self.poll_offset + buf.len]);
-                self.poll_offset = buf.len;
-            } else {
-                std.mem.copyForwards(u8, buf, data);
-            }
-            return data_len - self.poll_offset;
-        }
-        return posix.read(self.event_fd, buf);
-    }
-
-    pub fn indexOf(self: *@This(), needle: []const u8) ?usize {
-        if (self.poll_data) |data| {
-            return std.mem.indexOf(u8, data, needle);
-        }
-
-        return null;
-    }
-
-    pub fn free(self: @This(), allocator: Allocator) void {
-        if (self.poll_data) |data| {
-            allocator.free(data);
-        }
-    }
 };
 
 const Node = struct {

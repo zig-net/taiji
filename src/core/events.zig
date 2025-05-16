@@ -102,6 +102,15 @@ pub fn getEventByIndex(self: @This(), index: usize) events_type {
     return self.events[index];
 }
 
+pub fn getEventFd(self: @This(), ev: events_type) posix.fd_t {
+    _ = self;
+    return switch (event_type) {
+        .epoll => ev.data.fd,
+        .kqueue => ev.ident,
+        .poll => ev.fd,
+    };
+}
+
 pub fn setEventByIndex(self: @This(), index: usize, events: events_type) void {
     self.events[index] = events;
     return;
@@ -143,6 +152,7 @@ pub fn addFd(self: @This(), ev_fd: posix.fd_t) !void {
                 if (self.events[i].fd == context.INVALID_SOCKET) {
                     self.events[i].fd = ev_fd;
                     flag = true;
+                    break;
                 }
             }
             if (!flag) {
@@ -153,7 +163,7 @@ pub fn addFd(self: @This(), ev_fd: posix.fd_t) !void {
 }
 
 pub fn delFd(self: @This(), ev_fd: posix.fd_t) !void {
-    switch (self.event_type) {
+    switch (event_type) {
         .epoll => try posix.epoll_ctl(self.fd, os.linux.EPOLL.CTL_DEL, ev_fd, null),
         .kqueue => {
             const remove_kev = posix.Kevent{
@@ -168,11 +178,39 @@ pub fn delFd(self: @This(), ev_fd: posix.fd_t) !void {
         },
         .poll => {
             for (0..self.events.len) |i| {
-                self.events[i].fd = context.INVALID_SOCKET;
-                break;
+                if (self.events[i].fd == ev_fd) {
+                    self.events[i].fd = context.INVALID_SOCKET;
+                    break;
+                }
             }
         },
     }
+}
+
+pub fn checkFd(self: @This(), ev: events_type) bool {
+    _ = self;
+    switch (event_type) {
+        .epoll => {
+            if (comptime os_tag == .linux) {
+                if (ev.events & (os.linux.EPOLL.HUP | os.linux.EPOLL.ERR | os.linux.EPOLL.RDHUP) != 0) {
+                    return false;
+                }
+            }
+        },
+        .kqueue => {
+            if (comptime std.c.Kevent != void) {
+                if (ev.flags & (std.c.EV.EOF | std.c.EV.ERROR) != 0) {
+                    return false;
+                }
+            }
+        },
+        .poll => {
+            if (ev.revents & (context.POLLERR | context.POLLHUP | context.POLLNVAL) != 0) {
+                return false;
+            }
+        },
+    }
+    return true;
 }
 
 pub fn deinit(self: @This()) void {

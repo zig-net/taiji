@@ -81,6 +81,19 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
             },
         }
 
+        self.queue.pushTask(.{
+            .fd = client_fd,
+        });
+
         std.log.debug("socket client fd: {}", .{client_fd});
     }
+}
+
+test "posix socket_addr to align(4)" {
+    var addr_storage: posix.sockaddr = undefined;
+    var addr_len: posix.socklen_t = @sizeOf(@TypeOf(addr_storage));
+    try posix.getpeername(1, &addr_storage, &addr_len);
+    const sockaddr_ptr: *align(4) const posix.sockaddr = @alignCast(&addr_storage);
+    const addr = std.net.Address.initPosix(sockaddr_ptr);
+    std.log.debug("addr {}", .{addr.getPort()});
 }
