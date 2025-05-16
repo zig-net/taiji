@@ -6,12 +6,20 @@ const poll = @import("core/poll.zig");
 const epoll = @import("core/epoll.zig");
 const kqueue = @import("core/kqueue.zig");
 const thread_pool = @import("thread_pool.zig");
+const events_t = @import("core/events.zig");
+const loop_t = @import("core/loop.zig");
 
 allocator: Allocator,
+events: events_t,
 
-pub fn init(allocator: Allocator) @This() {
+pub fn init(allocator: Allocator) !@This() {
+    // 这里只监听服务器的accept，所以一个事件即可(对于poll来说)
+    const events = try events_t.init(allocator, .{
+        .max_events = 1,
+    });
     return .{
         .allocator = allocator,
+        .events = events,
     };
 }
 
@@ -25,17 +33,20 @@ pub const ServerOptions = struct {
 };
 
 pub fn ListenAndServer(self: @This(), address: Address, options: ServerOptions) !void {
+    defer self.events.deinit();
     var ser = try address.listen(.{});
     defer ser.deinit();
     // std.log.debug("socket fd: {}", .{ser.stream.handle});
     const th_pool = try thread_pool.initThreadPool(self.allocator, options.worker_num);
     const queue = th_pool.get_queue();
-    const event_loop = switch (builtin.os.tag) {
-        .linux => try epoll.init(queue),
-        // TODO: 需要mac设备进行测试
-        .macos => try kqueue.init(queue),
-        else => try poll.init(self.allocator, queue),
-    };
-    defer event_loop.deinit();
-    try event_loop.accept(&ser);
+    // const event_loop = switch (builtin.os.tag) {
+    //     .linux => try epoll.init(queue),
+    //     // TODO: 需要mac设备进行测试
+    //     .macos => try kqueue.init(queue),
+    //     else => try poll.init(self.allocator, queue),
+    // };
+    // defer event_loop.deinit();
+    // try event_loop.accept(&ser);
+    const loop = try loop_t.init(self.events, queue);
+    try loop.accept(&ser);
 }

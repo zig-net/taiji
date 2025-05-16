@@ -27,7 +27,7 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
     _ = try posix.kevent(self.kqueue_fd, &[_]posix.Kevent{kev}, null, 0);
 
     // 事件循环
-    var events: [10]posix.Kevent = undefined;
+    var events: [1024]posix.Kevent = undefined;
     while (true) {
         // std.log.debug("loop start", .{});
         const num_events = try posix.kevent(self.kqueue_fd, null, &events, -1);
@@ -36,8 +36,8 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
                 // 处理新连接
                 const client = try posix.accept(server_fd, null, null, 0);
                 const client_fd = client.stream.handle;
-                defer client.deinit();
-
+                // defer client.deinit();
+                // _ = try posix.fcntl(client_fd, posix.F.SETFD, posix.SOCK.NONBLOCK);
                 // 将客户端套接字注册到kqueue
                 const client_kev = posix.Kevent{
                     .ident = client_fd,

@@ -8,5 +8,6 @@ pub fn main() !void {
     std.log.debug("hi zig", .{});
     const port = 8081;
     const address = try std.net.Address.parseIp4("127.0.0.1", port);
-    try http.init(allocator).ListenAndServer(address, http.ServerOptions.default());
+    const ser = try http.init(allocator);
+    try ser.ListenAndServer(address, http.ServerOptions.default());
 }

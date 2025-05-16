@@ -8,6 +8,8 @@ const task_queue = @import("task_queue.zig");
 const poll = @import("core/poll.zig");
 const status = @import("status.zig").Status;
 const types = @import("types.zig");
+const builtin = @import("builtin");
+const os_tag = builtin.os.tag;
 
 var shutdown = Atomic.Value(bool).init(false); // 优雅退出标志
 
@@ -122,7 +124,8 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
             var body_buf: [1024]u8 = undefined;
             body_len = task_data.read(&body_buf) catch 0;
             var body_finished = false;
-            while (!body_finished and body_len != 0) {
+            std.log.debug("body len {}", .{body_len});
+            while (!body_finished) {
                 body_buffer.appendSlice(&body_buf) catch |err| {
                     std.log.err("body_buffer memory allocation error: {}", .{err});
                     break;
@@ -170,6 +173,8 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                     std.log.err("header_map memory allocation error: {}", .{err});
                 };
                 std.log.debug("header line: {s} => key: {s} value: {s}", .{ line, key, val });
+
+                // TODO: 在这里顺便提取出cookie
             }
             std.log.debug("body: {s}", .{body_buffer.items});
         } else {
@@ -182,9 +187,6 @@ pub fn deinit(self: @This()) void {
     self.queue.deinit();
     return;
 }
-
-const builtin = @import("builtin");
-const os_tag = builtin.os.tag;
 
 fn checkFd(ev: task_queue.Event, event_type: task_queue.EventType) bool {
     switch (event_type) {
@@ -226,7 +228,7 @@ fn closeFd(fd: posix.fd_t, ev_fd: posix.fd_t, event_type: task_queue.EventType) 
         },
         .kqueue => {
             if (comptime std.c.Kevent != void) {
-                posix.close(ev_fd);
+                // posix.close(ev_fd);
                 const remove_kev = posix.Kevent{
                     .ident = ev_fd,
                     .filter = std.c.EVFILT.READ,

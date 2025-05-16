@@ -32,13 +32,13 @@ pub fn accept(self: @This(), server: *std.net.Server) !void {
                 // 接受新连接
                 const client = try server.accept();
                 // 将客户端套接字加入 epoll
+                // _ = try posix.fcntl(client.stream.handle, posix.F.SETFD, posix.SOCK.NONBLOCK);
                 var client_event = os.linux.epoll_event{
                     .events = os.linux.EPOLL.IN | os.linux.EPOLL.ET | os.linux.EPOLL.HUP | os.linux.EPOLL.RDHUP | os.linux.EPOLL.ERR,
                     .data = .{ .fd = client.stream.handle },
                 };
                 try posix.epoll_ctl(self.epoll_fd, os.linux.EPOLL.CTL_ADD, client.stream.handle, &client_event);
             } else {
-                // std.log.debug("event: {}", .{ev.events});
                 // if (ev.events & (os.linux.EPOLL.HUP | os.linux.EPOLL.ERR | os.linux.EPOLL.RDHUP) != 0) {
                 //     std.log.debug("event: os.linux.EPOLL.HUP|os.linux.EPOLL.ERR", .{});
                 //     try posix.epoll_ctl(self.epoll_fd, os.linux.EPOLL.CTL_DEL, ev.data.fd, null);
