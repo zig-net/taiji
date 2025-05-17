@@ -48,7 +48,8 @@ pub fn popTask(self: @This()) ?Task {
     const current_head = head.load(.acquire);
     if (current_head) |h| {
         const next = h.next;
-        head.store(next, .monotonic);
+        _ = head.swap(next, .acquire);
+        // head.store(next, .monotonic);
         // 如果队列为空，同时更新tail为null
         if (next == null) {
             tail.store(null, .monotonic);

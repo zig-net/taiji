@@ -60,22 +60,6 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                 continue;
             };
         }
-        // handleTask(task_proc);
-        // defer task_data.free(allocator);
-
-        // const ev = task_data.event;
-
-        // const ret = checkFd(ev, task_data.event_type);
-
-        // std.log.debug("get task {} checked: {}", .{ task_data.event_fd, ret });
-
-        // if (!ret) {
-        //     closeFd(task_data.fd, task_data.event_fd, task_data.event_type) catch |err| {
-        //         std.log.err("An error occurred closing the file descriptor: {}", .{err});
-        //     };
-        //     // 考虑写回 status.INTERNAL_SERVER_ERROR
-        //     continue;
-        // }
         // 和request放在同一作用域
         defer header_buffer.clearRetainingCapacity();
         const event_nums = events.wait(100) catch 0;
@@ -141,28 +125,98 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                 };
                 continue;
             };
+
+            // 读取body部分，因header部分已经读取完成，所以剩下的就是body了，全量读取即可
+            //检查是否有 body
+            defer body_buffer.clearRetainingCapacity();
+            if (request.getHeader("Content-Length")) |content_length| {
+                const body_len = std.fmt.parseUnsigned(usize, content_length, 0) catch 0;
+                if (body_len > 0) {
+                    // std.log.debug("body len {}", .{body_len});
+                    var body: []u8 = allocator.alloc(u8, body_len + 4) catch |err| {
+                        std.log.err("Failed to allocate memory: {}", .{err});
+                        events.delFd(ev_fd) catch |errs| {
+                            std.log.err("An error occurred closing the file descriptor: {}", .{errs});
+                        };
+                        continue;
+                    }; // +4:\r\n\r\n
+                    defer allocator.free(body);
+
+                    var bytes_read: usize = 0;
+                    while (bytes_read < body_len) {
+                        const n = events.read(ev_fd, body[bytes_read..]) catch |err| {
+                            std.log.err("Failed to read body: {}", .{err});
+                            events.delFd(ev_fd) catch |errs| {
+                                std.log.err("An error occurred closing the file descriptor: {}", .{errs});
+                            };
+                            break;
+                        };
+                        bytes_read += n;
+                    }
+                    if (bytes_read != body_len) {
+                        std.log.err("Failed to read all body", .{});
+                        continue;
+                    }
+                    // std.log.debug("body: {s}", .{body[0..bytes_read]});
+                    body_buffer.appendSlice(body[0..bytes_read]) catch |err| {
+                        std.log.err("Failed to allocate memory: {}", .{err});
+                        events.delFd(ev_fd) catch |errs| {
+                            std.log.err("An error occurred closing the file descriptor: {}", .{errs});
+                        };
+                        continue;
+                    };
+                }
+            } else if (request.getHeader("Transfer-Encoding")) |transfer_encoding| {
+                if (std.mem.eql(u8, transfer_encoding, "chunked")) {
+                    // std.log.debug("chunked", .{});
+                    var tmp_buf: [1024]u8 = undefined;
+                    while (true) {
+                        const line = readLineBlocking(allocator, ev_fd, 512) catch "";
+                        defer allocator.free(line);
+                        var chunk_size_str_iter = std.mem.splitSequence(u8, line, ";");
+                        const chunk_size_str = chunk_size_str_iter.next() orelse "";
+                        const chunk_size = std.fmt.parseInt(usize, chunk_size_str, 16) catch 0;
+                        if (chunk_size == 0) break;
+
+                        // 读取块数据
+                        var bytes_read: usize = 0;
+                        while (bytes_read < chunk_size) {
+                            const remaining = chunk_size - bytes_read;
+                            const read_len = @min(remaining, tmp_buf.len);
+                            const n = events.read(ev_fd, tmp_buf[0..read_len]) catch 0;
+                            if (n == 0) break;
+                            body_buffer.appendSlice(tmp_buf[0..n]) catch |err| {
+                                // 处理错误
+                                std.log.err("Failed to allocate memory: {}", .{err});
+                                break;
+                            };
+                            bytes_read += n;
+                        }
+
+                        // 验证块结束符
+                        var crlf_buf: [2]u8 = undefined;
+                        _ = posix.read(ev_fd, &crlf_buf) catch 0;
+                        if (crlf_buf[0] != '\r' or crlf_buf[1] != '\n') {
+                            // 协议错误处理
+                            std.log.err("Invalid chunked encoding", .{});
+                        }
+                    }
+                }
+            }
+
+            // std.log.debug("body: {s}", .{body_buffer.items});
+            request.setBody(body_buffer.items);
+
+            // 获取客户端IP地址
+            var addr_storage: posix.sockaddr = undefined;
+            var addr_len: posix.socklen_t = @sizeOf(@TypeOf(addr_storage));
+            posix.getpeername(ev_fd, &addr_storage, &addr_len) catch |err| {
+                std.log.err("Failed to get client address: {}", .{err});
+            };
+            const sockaddr_ptr: *align(4) const posix.sockaddr = @alignCast(&addr_storage);
+            const addr = std.net.Address.initPosix(sockaddr_ptr);
+            request.setClientAddr(addr);
         }
-
-        // 读取body部分，因header部分已经读取完成，所以剩下的就是body了，全量读取即可
-        // var body_len: usize = 0;
-        // var body_buf: [1024]u8 = undefined;
-        // body_len = task_data.read(&body_buf) catch 0;
-        // var body_finished = false;
-        // std.log.debug("body len {}", .{body_len});
-        // while (!body_finished) {
-        //     body_buffer.appendSlice(&body_buf) catch |err| {
-        //         std.log.err("body_buffer memory allocation error: {}", .{err});
-        //         break;
-        //     };
-
-        //     if (body_len < 1024 or std.mem.endsWith(u8, body_buffer.items, "0\r\n\r\n")) {
-        //         body_finished = true;
-        //     }
-
-        //     body_len = task_data.read(&body_buf) catch {
-        //         break;
-        //     };
-        // }
     } else {
         std.time.sleep(10_000_000); // 10ms 休眠
     }
@@ -171,6 +225,32 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
 pub fn deinit(self: @This()) void {
     self.queue.deinit();
     return;
+}
+
+pub fn readLineBlocking(
+    allocator: std.mem.Allocator,
+    fd: posix.fd_t,
+    max_line_len: usize,
+) ![]u8 {
+    var buf = std.ArrayList(u8).init(allocator);
+    defer buf.deinit();
+
+    var byte: [1]u8 = undefined;
+    while (buf.items.len < max_line_len) {
+        const n = try posix.read(fd, &byte);
+        if (n == 0) break; // EOF
+        switch (byte[0]) {
+            '\n' => {
+                // 检查是否是 \r\n
+                if (buf.items.len > 0 and buf.items[buf.items.len - 1] == '\r') {
+                    _ = buf.pop(); // 移除 \r
+                }
+                break; // 行结束
+            },
+            else => try buf.append(byte[0]),
+        }
+    }
+    return buf.toOwnedSlice();
 }
 
 test "test workerThread" {

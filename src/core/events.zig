@@ -121,6 +121,11 @@ pub fn read(self: @This(), ev_fd: posix.fd_t, buf: []u8) !usize {
     return posix.read(ev_fd, buf);
 }
 
+pub fn write(self: @This(), ev_fd: posix.fd_t, buf: []u8) !usize {
+    _ = self;
+    return posix.write(ev_fd, buf);
+}
+
 pub fn addFd(self: @This(), ev_fd: posix.fd_t) !void {
     switch (event_type) {
         .epoll => {
