@@ -5,11 +5,13 @@ const builtin = @import("builtin");
 const thread_pool = @import("thread_pool.zig");
 const events_t = @import("core/events.zig");
 const accept_t = @import("core/accept.zig");
+const router_t = @import("router.zig").Router;
 
 allocator: Allocator,
 events: events_t,
+router: router_t,
 
-pub fn init(allocator: Allocator) !@This() {
+pub fn init(allocator: Allocator, router: router_t) !@This() {
     // 这里只监听服务器的accept，所以一个事件即可(对于poll来说)
     const events = try events_t.init(allocator, .{
         .max_events = 1,
@@ -17,6 +19,7 @@ pub fn init(allocator: Allocator) !@This() {
     return .{
         .allocator = allocator,
         .events = events,
+        .router = router,
     };
 }
 
@@ -29,13 +32,23 @@ pub const ServerOptions = struct {
     }
 };
 
-pub fn ListenAndServer(self: @This(), address: Address, options: ServerOptions) !void {
-    defer self.events.deinit();
+pub fn deinit(self: *@This()) void {
+    self.events.deinit();
+}
+
+pub fn ListenAndServer(self: *@This(), address: Address, options: ServerOptions) !void {
     var ser = try address.listen(.{});
     defer ser.deinit();
     // std.log.debug("socket fd: {}", .{ser.stream.handle});
     const th_pool = try thread_pool.initThreadPool(self.allocator, options.worker_num);
     const queue = th_pool.get_queue();
     const loop = try accept_t.init(self.events, queue);
-    try loop.accept(&ser);
+    try loop.accept(&ser, &self.router);
+}
+
+test "server" {
+    var router = try router_t.init(std.testing.allocator);
+    var ser = try init(std.testing.allocator, router);
+    defer ser.deinit();
+    defer router.deinit();
 }

@@ -48,8 +48,7 @@ pub fn popTask(self: @This()) ?Task {
     const current_head = head.load(.acquire);
     if (current_head) |h| {
         const next = h.next;
-        _ = head.swap(next, .acquire);
-        // head.store(next, .monotonic);
+        head.store(next, .monotonic);
         // 如果队列为空，同时更新tail为null
         if (next == null) {
             tail.store(null, .monotonic);
@@ -72,11 +71,6 @@ test "task queue" {
     // const data: []u8 = &stack_buf;
     queue.pushTask(.{
         .fd = 1,
-        .event_type = .epoll,
-        .event_fd = 1,
-        .event = .{
-            .unknown = null,
-        },
     });
     const task_data = queue.popTask();
     if (task_data) |task_data_info| {

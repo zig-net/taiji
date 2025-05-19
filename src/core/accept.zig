@@ -3,6 +3,7 @@ const os = std.os;
 const posix = std.posix;
 const task_queue = @import("../task_queue.zig");
 const events_t = @import("./events.zig");
+const router_t = @import("../router.zig").Router;
 
 events: events_t,
 queue: task_queue,
@@ -14,7 +15,12 @@ pub fn init(events: events_t, queue: task_queue) !@This() {
     };
 }
 
-pub fn accept(self: @This(), server: *std.net.Server) !void {
+pub fn accept(
+    self: @This(),
+    server: *std.net.Server,
+    router: *router_t,
+) !void {
+    _ = router;
     var event = self.events;
     const server_fd = server.stream.handle;
     try event.addFd(server_fd);
