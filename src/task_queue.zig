@@ -4,6 +4,7 @@ const Atomic = std.atomic;
 const Allocator = std.mem.Allocator;
 const fd_t = std.posix.fd_t;
 const posix = std.posix;
+const router_t = @import("router.zig").Router;
 
 allocator: Allocator,
 // 任务定义

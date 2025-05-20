@@ -40,10 +40,10 @@ pub fn ListenAndServer(self: *@This(), address: Address, options: ServerOptions)
     var ser = try address.listen(.{});
     defer ser.deinit();
     // std.log.debug("socket fd: {}", .{ser.stream.handle});
-    const th_pool = try thread_pool.initThreadPool(self.allocator, options.worker_num);
+    const th_pool = try thread_pool.initThreadPool(self.allocator, options.worker_num, &self.router);
     const queue = th_pool.get_queue();
     const loop = try accept_t.init(self.events, queue);
-    try loop.accept(&ser, &self.router);
+    try loop.accept(&ser);
 }
 
 test "server" {

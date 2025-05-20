@@ -2,11 +2,13 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList(u8);
 const types = @import("types.zig");
+const router_params_t = @import("router.zig").Params;
 
 allocator: Allocator,
 header_map: std.StringHashMap([]const u8),
 cookie_map: std.StringHashMap([]const u8),
 query_map: std.StringHashMap([]const u8),
+router_params: router_params_t = undefined,
 method: types.Method = types.Method.UNKNOWN,
 url: []const u8 = "",
 version: types.HTTP_Version = types.HTTP_Version.HTTP1_1,
@@ -20,6 +22,17 @@ pub fn init(allocator: Allocator) @This() {
         .cookie_map = std.StringHashMap([]const u8).init(allocator),
         .query_map = std.StringHashMap([]const u8).init(allocator),
     };
+}
+
+pub fn setRouterParams(self: *@This(), params: router_params_t) void {
+    self.router_params = params;
+}
+
+pub fn getRouterParams(self: @This(), key: []const u8) ?[]const u8 {
+    if (self.router_params != undefined) {
+        return self.router_params.get(key);
+    }
+    return null;
 }
 
 pub fn parseHeader(self: *@This(), header_data: []u8) !void {

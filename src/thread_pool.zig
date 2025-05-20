@@ -11,16 +11,18 @@ const builtin = @import("builtin");
 // const os_tag = builtin.os.tag;
 const events_t = @import("./core/events.zig");
 const request_t = @import("./request.zig");
+const router_t = @import("./router.zig").Router;
+const response_t = @import("./response.zig");
 
 var shutdown = Atomic.Value(bool).init(false); // 优雅退出标志
 
 queue: task_queue,
 allocator: Allocator,
 
-pub fn initThreadPool(allocator: std.mem.Allocator, num_workers: usize) !@This() {
+pub fn initThreadPool(allocator: std.mem.Allocator, num_workers: usize, router: *const router_t) !@This() {
     const queue = task_queue.init(allocator);
     for (0..num_workers) |_| {
-        _ = try Thread.spawn(.{}, workerThread, .{ allocator, queue });
+        _ = try Thread.spawn(.{}, workerThread, .{ allocator, queue, router });
     }
 
     return .{
@@ -34,7 +36,7 @@ pub fn get_queue(self: @This()) task_queue {
 }
 
 // 工作线程函数
-fn workerThread(allocator: Allocator, queue: task_queue) void {
+fn workerThread(allocator: Allocator, queue: task_queue, router: *const router_t) void {
     var header_buffer = std.ArrayList(u8).init(allocator);
     defer header_buffer.deinit();
     var body_buffer = std.ArrayList(u8).init(allocator);
@@ -81,6 +83,7 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                     continue;
                 }
             }
+
             const checked = events.checkFd(event);
 
             if (!checked) {
@@ -89,16 +92,44 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                 };
                 continue;
             }
-            // 构建resquest
+            // 构建resquest和response
+            var request = request_t.init(allocator);
+            defer request.deinit();
+            var response = response_t.init(allocator);
+            defer response.deinit();
+            var keep_alive = false;
+            var preprocessing_is_completed = false;
+
+            defer {
+                // std.log.debug("preprocessing_is_completed: {}, keep_alive: {}", .{ preprocessing_is_completed, keep_alive });
+                if (!preprocessing_is_completed) {
+                    const resp = response.parseResponse() catch "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+                    std.log.err("preprocessing is not completed: {s}", .{resp});
+                    _ = posix.write(ev_fd, resp) catch 0;
+                }
+                if (!keep_alive) {
+                    events.delFd(ev_fd) catch |err| {
+                        std.log.err("An error occurred closing the file descriptor: {}", .{err});
+                    };
+                }
+                // TODO: keep-alive待支持
+                if (preprocessing_is_completed) {
+                    posix.close(ev_fd);
+                }
+            }
+
             var headers_finished = false;
             var byte: [1]u8 = undefined;
             while (!headers_finished) {
                 const size = events.read(ev_fd, &byte) catch 0;
                 if (size == 0) {
+                    std.log.err("Header data reading failed", .{});
+                    response.setStatus(.BAD_REQUEST);
                     break;
                 }
                 header_buffer.appendSlice(&byte) catch |err| {
                     std.log.err("Header_buffer memory allocation error: {}", .{err});
+                    response.setStatus(.INTERNAL_SERVER_ERROR);
                     break;
                 };
 
@@ -108,21 +139,12 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                 }
             }
             if (!headers_finished) {
-                std.log.err("Header data reading failed", .{});
-                events.delFd(ev_fd) catch |err| {
-                    std.log.err("An error occurred closing the file descriptor: {}", .{err});
-                };
                 continue;
             }
 
-            var request = request_t.init(allocator);
-            defer request.deinit();
-
             request.parseHeader(header_buffer.items) catch |err| {
                 std.log.err("Failed to parse header: {}", .{err});
-                events.delFd(ev_fd) catch |errs| {
-                    std.log.err("An error occurred closing the file descriptor: {}", .{errs});
-                };
+                response.setStatus(.BAD_REQUEST);
                 continue;
             };
 
@@ -135,9 +157,7 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                     // std.log.debug("body len {}", .{body_len});
                     var body: []u8 = allocator.alloc(u8, body_len + 4) catch |err| {
                         std.log.err("Failed to allocate memory: {}", .{err});
-                        events.delFd(ev_fd) catch |errs| {
-                            std.log.err("An error occurred closing the file descriptor: {}", .{errs});
-                        };
+                        response.setStatus(.INTERNAL_SERVER_ERROR);
                         continue;
                     }; // +4:\r\n\r\n
                     defer allocator.free(body);
@@ -146,23 +166,18 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                     while (bytes_read < body_len) {
                         const n = events.read(ev_fd, body[bytes_read..]) catch |err| {
                             std.log.err("Failed to read body: {}", .{err});
-                            events.delFd(ev_fd) catch |errs| {
-                                std.log.err("An error occurred closing the file descriptor: {}", .{errs});
-                            };
+                            response.setStatus(.BAD_REQUEST);
                             break;
                         };
                         bytes_read += n;
                     }
                     if (bytes_read != body_len) {
-                        std.log.err("Failed to read all body", .{});
                         continue;
                     }
                     // std.log.debug("body: {s}", .{body[0..bytes_read]});
                     body_buffer.appendSlice(body[0..bytes_read]) catch |err| {
                         std.log.err("Failed to allocate memory: {}", .{err});
-                        events.delFd(ev_fd) catch |errs| {
-                            std.log.err("An error occurred closing the file descriptor: {}", .{errs});
-                        };
+                        response.setStatus(.INTERNAL_SERVER_ERROR);
                         continue;
                     };
                 }
@@ -170,6 +185,7 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                 if (std.mem.eql(u8, transfer_encoding, "chunked")) {
                     // std.log.debug("chunked", .{});
                     var tmp_buf: [1024]u8 = undefined;
+                    var process_flag = false;
                     while (true) {
                         const line = readLineBlocking(allocator, ev_fd, 512) catch "";
                         defer allocator.free(line);
@@ -188,9 +204,14 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                             body_buffer.appendSlice(tmp_buf[0..n]) catch |err| {
                                 // 处理错误
                                 std.log.err("Failed to allocate memory: {}", .{err});
+                                response.setStatus(.INTERNAL_SERVER_ERROR);
+                                process_flag = false;
                                 break;
                             };
                             bytes_read += n;
+                        }
+                        if (!process_flag) {
+                            break;
                         }
 
                         // 验证块结束符
@@ -199,7 +220,12 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
                         if (crlf_buf[0] != '\r' or crlf_buf[1] != '\n') {
                             // 协议错误处理
                             std.log.err("Invalid chunked encoding", .{});
+                            response.setStatus(.BAD_REQUEST);
+                            break;
                         }
+                    }
+                    if (!process_flag) {
+                        continue;
                     }
                 }
             }
@@ -207,15 +233,59 @@ fn workerThread(allocator: Allocator, queue: task_queue) void {
             // std.log.debug("body: {s}", .{body_buffer.items});
             request.setBody(body_buffer.items);
 
+            // 检查keep-alive
+            if (request.getHeader("Connection")) |connection| {
+                keep_alive = std.mem.eql(u8, connection, "keep-alive");
+                keep_alive = true;
+            }
+
             // 获取客户端IP地址
             var addr_storage: posix.sockaddr = undefined;
             var addr_len: posix.socklen_t = @sizeOf(@TypeOf(addr_storage));
             posix.getpeername(ev_fd, &addr_storage, &addr_len) catch |err| {
                 std.log.err("Failed to get client address: {}", .{err});
+                response.setStatus(.INTERNAL_SERVER_ERROR);
+                continue;
             };
             const sockaddr_ptr: *align(4) const posix.sockaddr = @alignCast(&addr_storage);
             const addr = std.net.Address.initPosix(sockaddr_ptr);
             request.setClientAddr(addr);
+
+            // 匹配路由
+            const handler = router.match(request.method, request.url) catch |err| {
+                std.log.err("Failed to match route: {}", .{err});
+                response.setStatus(.INTERNAL_SERVER_ERROR);
+                continue;
+            };
+
+            preprocessing_is_completed = true;
+
+            if (handler) |h| {
+                // 匹配成功
+                // std.log.debug("matched: {any}", .{h});
+                // 响应200
+                response.setStatus(.OK);
+                request.setRouterParams(h.params);
+                // 调用处理函数
+                h.handler(request, &response) catch |err| {
+                    std.log.err("Failed to handle request: {}", .{err});
+                    response.setStatus(.INTERNAL_SERVER_ERROR);
+                };
+            } else {
+                std.log.debug("404", .{});
+                // 404
+                response.setStatus(.NOT_FOUND);
+            }
+
+            // TODO:因暂不支持keep-alive，所以这里先统一写回close
+            if (keep_alive) {
+                response.setHeader("Connection", "close") catch |err| {
+                    std.log.err("Failed to set http response header: {}", .{err});
+                };
+            }
+
+            const resp = response.parseResponse() catch "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+            _ = posix.write(ev_fd, resp) catch 0;
         }
     } else {
         std.time.sleep(10_000_000); // 10ms 休眠

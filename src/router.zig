@@ -5,7 +5,7 @@ const request_t = @import("./request.zig");
 const response_t = @import("./response.zig");
 const types = @import("./types.zig");
 
-pub const Handler = *const fn (request: request_t, response: response_t) anyerror!void;
+pub const Handler = *const fn (request: request_t, response: *response_t) anyerror!void;
 
 // NEW PARAMS DEFINITION (Method 1)
 pub const Params = struct {
@@ -209,7 +209,7 @@ pub const Router = struct {
     }
 
     // Router.match now returns the new Params type
-    pub fn match(self: *Self, http_method: types.Method, path: []const u8) !?struct { handler: Handler, params: Params } {
+    pub fn match(self: *const Self, http_method: types.Method, path: []const u8) !?struct { handler: Handler, params: Params } {
         // Initialize with our new Params struct
         var params_map = Params.init(self.allocator);
         var success = false;
@@ -230,7 +230,7 @@ pub const Router = struct {
     }
 
     fn search(
-        self: *Self,
+        self: *const Self,
         start_node: *Node,
         http_method: types.Method,
         parts: [][]const u8,
@@ -290,22 +290,22 @@ pub const Router = struct {
 
 // --- Test ---
 // Test functions (empty_handler, etc.) remain the same.
-fn empty_handler(request: request_t, response: response_t) anyerror!void {
+fn empty_handler(request: request_t, response: *response_t) anyerror!void {
     _ = request;
     _ = response;
     // std.debug.print("Handler called!\n", .{});
 }
-fn user_id_handler(request: request_t, response: response_t) anyerror!void {
+fn user_id_handler(request: request_t, response: *response_t) anyerror!void {
     _ = request;
     _ = response;
     // std.debug.print("User ID handler called!\n", .{});
 }
-fn user_post_handler(request: request_t, response: response_t) anyerror!void {
+fn user_post_handler(request: request_t, response: *response_t) anyerror!void {
     _ = request;
     _ = response;
     // std.debug.print("User Post handler called!\n", .{});
 }
-fn wildcard_handler(request: request_t, response: response_t) anyerror!void {
+fn wildcard_handler(request: request_t, response: *response_t) anyerror!void {
     _ = request;
     _ = response;
     // std.debug.print("Wildcard handler called!\n", .{});
