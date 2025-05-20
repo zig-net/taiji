@@ -8,7 +8,7 @@ const task_queue = @import("task_queue.zig");
 const status = @import("status.zig").Status;
 const types = @import("types.zig");
 const builtin = @import("builtin");
-// const os_tag = builtin.os.tag;
+const os_tag = builtin.os.tag;
 const events_t = @import("./core/events.zig");
 const request_t = @import("./request.zig");
 const router_t = @import("./router.zig").Router;
@@ -52,13 +52,11 @@ fn workerThread(allocator: Allocator, queue: task_queue, router: *const router_t
     while (!shutdown.load(.seq_cst)) {
         // TODO:要注意的是这里没有对每个线程做专门的负载均衡优化,是一个优化点
         // TODO:考虑如果一个handler函数比较耗时或者是长连接的情况下，可能会导致线程阻塞，是一个很必要的优化
+        // TODO:事件循环和业务最好实现解耦，这样可以让事件循环更加灵活
         if (queue.popTask()) |task_data| {
             events.addFd(task_data.fd) catch |err| {
                 std.log.err("Failed to add file descriptor: {}", .{err});
-                queue.pushTask(.{
-                    .fd = task_data.fd,
-                });
-                Thread.sleep(10_000_000);
+                close(task_data.fd);
                 // 延迟一下,让给其它工作线程
                 continue;
             };
@@ -115,7 +113,7 @@ fn workerThread(allocator: Allocator, queue: task_queue, router: *const router_t
                 }
                 // TODO: keep-alive待支持
                 if (preprocessing_is_completed) {
-                    posix.close(ev_fd);
+                    close(ev_fd);
                 }
             }
 
@@ -297,6 +295,21 @@ fn workerThread(allocator: Allocator, queue: task_queue, router: *const router_t
 pub fn deinit(self: @This()) void {
     self.queue.deinit();
     return;
+}
+
+fn close(fd: posix.fd_t) void {
+    if (os_tag == .windows) {
+        return posix.windows.CloseHandle(fd);
+    }
+    if (os_tag == .wasi and !builtin.link_libc) {
+        _ = std.os.wasi.fd_close(fd);
+        return;
+    }
+    switch (posix.errno(posix.system.close(fd))) {
+        .BADF => return, // Always a race condition.
+        .INTR => return, // This is still a success. See https://github.com/ziglang/zig/issues/2425
+        else => return,
+    }
 }
 
 pub fn readLineBlocking(
