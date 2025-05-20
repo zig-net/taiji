@@ -51,6 +51,7 @@ fn workerThread(allocator: Allocator, queue: task_queue, router: *const router_t
 
     while (!shutdown.load(.seq_cst)) {
         // TODO:要注意的是这里没有对每个线程做专门的负载均衡优化,是一个优化点
+        // TODO:考虑如果一个handler函数比较耗时或者是长连接的情况下，可能会导致线程阻塞，是一个很必要的优化
         if (queue.popTask()) |task_data| {
             events.addFd(task_data.fd) catch |err| {
                 std.log.err("Failed to add file descriptor: {}", .{err});
@@ -267,6 +268,7 @@ fn workerThread(allocator: Allocator, queue: task_queue, router: *const router_t
                 response.setStatus(.OK);
                 request.setRouterParams(h.params);
                 // 调用处理函数
+                // TODO:考虑长连接和耗时的场景
                 h.handler(request, &response) catch |err| {
                     std.log.err("Failed to handle request: {}", .{err});
                     response.setStatus(.INTERNAL_SERVER_ERROR);

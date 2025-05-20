@@ -20,6 +20,7 @@ const Node = struct {
 var head = Atomic.Value(?*Node).init(null);
 var tail = Atomic.Value(?*Node).init(null);
 
+// TODO: 这里优化方向参考go的全局协程队列设计
 pub fn init(allocator: Allocator) @This() {
     return .{ .allocator = allocator };
 }
