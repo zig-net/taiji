@@ -1,14 +1,12 @@
-# 太极 - 一个ZIG实现的http server框架
+# Taiji - A ZIG-based HTTP Server Framework
 
-## 跨平台支持
+## Introduction
 
-- linux => epoll
+Taiji is a cross-platform HTTP server framework written in ZIG. It provides a simple and easy-to-use API, allowing developers to quickly build high-performance web applications.
 
-- windows => poll
-
-- Mac、Unix、FreeBSD => kqueue
 
 ## example:
+
 ```zig
 const std = @import("std");
 const taiji = @import("taiji");
