@@ -7,6 +7,9 @@ const posix = std.posix;
 const router_t = @import("router.zig").Router;
 
 allocator: Allocator,
+lock: std.Thread.Mutex = .{},
+head: ?*Node = null,
+tail: ?*Node = null,
 // 任务定义
 pub const Task = struct {
     fd: fd_t,
@@ -17,46 +20,46 @@ const Node = struct {
     task: Task,
 };
 
-var head = Atomic.Value(?*Node).init(null);
-var tail = Atomic.Value(?*Node).init(null);
-
 // TODO: 这里优化方向参考go的全局协程队列设计
 pub fn init(allocator: Allocator) @This() {
     return .{ .allocator = allocator };
 }
 
 // 生产者（主线程）
-pub fn pushTask(self: @This(), task: Task) void {
+pub fn pushTask(self: *@This(), task: Task) void {
+    self.lock.lock();
+    defer self.lock.unlock();
     const node = self.allocator.create(Node) catch return;
+    // std.log.debug("push task: {*}", .{node});
     node.* = .{ .task = task };
-    const current_tail = tail.load(.monotonic);
+    const current_tail = self.tail;
     while (true) {
         if (current_tail) |t| {
             t.next = node;
-            tail.store(node, .monotonic);
-            // std.log.debug("push task: {}", .{task.event_fd});
+            self.tail = node;
             break;
         } else {
-            head.store(node, .monotonic);
-            tail.store(node, .monotonic);
-            // std.log.debug("push task 2: {}", .{task.event_fd});
+            self.head = node;
+            self.tail = node;
             break;
         }
     }
 }
 
-// TODO: 非线程安全实现
 // 消费者（工作线程）
-pub fn popTask(self: @This()) ?Task {
-    const current_head = head.load(.acquire);
+pub fn popTask(self: *@This()) ?Task {
+    if (!self.lock.tryLock()) return null;
+    defer self.lock.unlock();
+    const current_head = self.head;
     if (current_head) |h| {
-        const next = h.next;
-        head.store(next, .monotonic);
+        self.head = h.next;
         // 如果队列为空，同时更新tail为null
-        if (next == null) {
-            tail.store(null, .monotonic);
+        if (self.head == null) {
+            self.tail = null;
         }
         const task = h.task;
+        // std.log.debug("pop task: {*}", .{h});
+        // std.log.debug("test: {any}", .{h});
         self.allocator.destroy(h);
         return task;
     }

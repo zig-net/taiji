@@ -5,9 +5,9 @@ const task_queue = @import("../task_queue.zig");
 const events_t = @import("./events.zig");
 
 events: events_t,
-queue: task_queue,
+queue: *task_queue,
 
-pub fn init(events: events_t, queue: task_queue) !@This() {
+pub fn init(events: events_t, queue: *task_queue) !@This() {
     return .{
         .events = events,
         .queue = queue,

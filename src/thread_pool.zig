@@ -16,27 +16,26 @@ const response_t = @import("./response.zig");
 
 var shutdown = Atomic.Value(bool).init(false); // 优雅退出标志
 
-queue: task_queue,
+queue: task_queue = undefined,
 allocator: Allocator,
 
-pub fn initThreadPool(allocator: std.mem.Allocator, num_workers: usize, router: *const router_t) !@This() {
-    const queue = task_queue.init(allocator);
+pub fn initThreadPool(allocator: std.mem.Allocator, num_workers: usize, router: *const router_t) !*@This() {
+    var self = try allocator.create(@This());
+    self.queue = task_queue.init(allocator);
+    self.allocator = allocator;
     for (0..num_workers) |_| {
-        _ = try Thread.spawn(.{}, workerThread, .{ allocator, queue, router });
+        _ = try Thread.spawn(.{}, workerThread, .{ allocator, &self.queue, router });
     }
 
-    return .{
-        .queue = queue,
-        .allocator = allocator,
-    };
+    return self;
 }
 
-pub fn get_queue(self: @This()) task_queue {
-    return self.queue;
+pub fn get_queue(self: *@This()) *task_queue {
+    return &self.queue;
 }
 
 // 工作线程函数
-fn workerThread(allocator: Allocator, queue: task_queue, router: *const router_t) void {
+fn workerThread(allocator: Allocator, queue: *task_queue, router: *const router_t) void {
     var header_buffer = std.ArrayList(u8).init(allocator);
     defer header_buffer.deinit();
     var body_buffer = std.ArrayList(u8).init(allocator);
